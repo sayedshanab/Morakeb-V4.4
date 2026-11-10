@@ -40,7 +40,7 @@ import java.util.concurrent.TimeUnit
  *    A bare TCP connect is NOT enough: VPN apps (AdGuard, etc.) answer the TCP handshake
  *    locally and would hide an outage.
  *  - Fast modes (<= 3 s): CPU is kept awake with a *timed* wake lock between checks.
- *  - Slow modes (15 s / 60 s): no wake lock is held while idle; an exact alarm wakes the
+ *  - Slow modes (5 s and up): no wake lock is held while idle; an exact alarm wakes the
  *    CPU just long enough for one check.
  *  - Connectivity callbacks trigger an immediate check when the network changes, so slow
  *    modes still notice a lost link right away.

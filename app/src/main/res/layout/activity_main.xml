@@ -759,14 +759,11 @@
                     android:background="@drawable/bg_log"
                     android:padding="10dp">
 
-                    <TextView
+                    <LinearLayout
                         android:id="@+id/log"
                         android:layout_width="match_parent"
                         android:layout_height="wrap_content"
-                        android:fontFamily="monospace"
-                        android:layoutDirection="ltr"
-                        android:textDirection="ltr"
-                        android:textSize="13sp" />
+                        android:orientation="vertical" />
                 </ScrollView>
             </LinearLayout>
         </LinearLayout>

@@ -20,14 +20,13 @@ import android.os.Handler
 import android.os.Looper
 import android.os.PowerManager
 import android.provider.Settings
-import android.text.Html
-import android.text.TextUtils
 import android.view.Gravity
 import android.view.View
 import android.widget.AdapterView
 import android.widget.ArrayAdapter
 import android.widget.Button
 import android.widget.CheckBox
+import android.widget.LinearLayout
 import android.widget.ScrollView
 import android.widget.SeekBar
 import android.widget.Spinner
@@ -35,7 +34,6 @@ import android.widget.TableLayout
 import android.widget.TableRow
 import android.widget.TextView
 import androidx.activity.result.contract.ActivityResultContracts
-import androidx.appcompat.app.AlertDialog
 import androidx.appcompat.app.AppCompatActivity
 
 class MainActivity : AppCompatActivity() {
@@ -68,7 +66,7 @@ class MainActivity : AppCompatActivity() {
     private lateinit var tvTotalDur: TextView
     private lateinit var banner: TextView
     private lateinit var recBanner: TextView
-    private lateinit var tvLog: TextView
+    private lateinit var logBox: LinearLayout
     private lateinit var logScroll: ScrollView
     private lateinit var outageScroll: ScrollView
     private lateinit var outageTable: TableLayout
@@ -94,7 +92,7 @@ class MainActivity : AppCompatActivity() {
     private lateinit var ipBadge: TextView
 
     private val thresholds = listOf(2, 3, 5)
-    private val intervals = listOf(1, 3, 15, 60)
+    private val intervals = listOf(1, 3, 5, 10, 15, 60)
 
     private var lastLogVersion = -1
     private var lastHistoryVersion = -1
@@ -124,7 +122,7 @@ class MainActivity : AppCompatActivity() {
         tvTotalDur = findViewById(R.id.totalDownDuration)
         banner = findViewById(R.id.disconnectBanner)
         recBanner = findViewById(R.id.reconnectBanner)
-        tvLog = findViewById(R.id.log)
+        logBox = findViewById(R.id.log)
         logScroll = findViewById(R.id.logScroll)
         outageScroll = findViewById(R.id.outageScroll)
         outageTable = findViewById(R.id.outageTable)
@@ -186,16 +184,10 @@ class MainActivity : AppCompatActivity() {
         }
 
         findViewById<Button>(R.id.clearHistory).setOnClickListener {
-            AlertDialog.Builder(this)
-                .setMessage("هل أنت متأكد من مسح كافة سجلات الانقطاعات والإحصائيات المحفوظة؟")
-                .setPositiveButton("نعم") { _, _ ->
-                    MonitorState.clearAll()
-                    IpTracker.resetDisplay(this)
-                    MonitorState.log("🗑️ تم تصفير السجل المحفوظ وبدء جلسة إحصائيات جديدة.", "ok")
-                    render()
-                }
-                .setNegativeButton("إلغاء", null)
-                .show()
+            MonitorState.clearAll()
+            IpTracker.resetDisplay(this)
+            MonitorState.log("🗑️ تم تصفير السجل المحفوظ وبدء جلسة إحصائيات جديدة.", "ok")
+            render()
         }
         btnBattery.setOnClickListener { requestBatteryExemption() }
 
@@ -302,6 +294,8 @@ class MainActivity : AppCompatActivity() {
             listOf(
                 "كل 1 ثانية (دقيق، أعلى استهلاك)",
                 "كل 3 ثواني (متوازن)",
+                "كل 5 ثواني",
+                "كل 10 ثواني",
                 "كل 15 ثانية (موفر للطاقة)",
                 "كل 60 ثانية (أقصى توفير)"
             )
@@ -504,18 +498,70 @@ class MainActivity : AppCompatActivity() {
             lastLogVersion = s.logVersion
             val lines = s.snapshot()
             logBadge.text = "${lines.size} حدث مسجل"
-            val html = lines.joinToString("<br>") {
-                val c = when (it.type) {
-                    "warn" -> "#ffaa00"
-                    "fail" -> "#ff5555"
-                    else -> "#00ff88"
-                }
-                "<font color='#38bdf8'><b>[${Fmt.ts(it.ts, it.time)}]</b></font> " +
-                    "<font color='$c'>${TextUtils.htmlEncode(it.msg)}</font>"
-            }
-            tvLog.text = Html.fromHtml(html, Html.FROM_HTML_MODE_LEGACY)
+            refreshLog(lines)
             logScroll.scrollTo(0, 0)
         }
+    }
+
+    private val arabicRe = Regex("[\\u0600-\\u06FF]")
+    private var lastTopLine: LogLine? = null
+
+    /** Newest lines are prepended; the list is only rebuilt completely when it was cleared. */
+    private fun refreshLog(lines: List<LogLine>) {
+        val top = lastTopLine
+        val k = if (top == null) -1 else lines.indexOfFirst { it === top }
+        if (k < 0 || logBox.childCount == 0) {
+            logBox.removeAllViews()
+            for (l in lines) logBox.addView(logRow(l))
+        } else {
+            for (i in k - 1 downTo 0) logBox.addView(logRow(lines[i]), 0)
+            while (logBox.childCount > lines.size) logBox.removeViewAt(logBox.childCount - 1)
+        }
+        lastTopLine = lines.firstOrNull()
+    }
+
+    /**
+     * One log line: time stamp pinned to the far left (always left-to-right), message beside it.
+     * An Arabic message is right-to-left and starts from the far right; other text stays left.
+     */
+    private fun logRow(l: LogLine): View {
+        val rtl = arabicRe.containsMatchIn(l.msg)
+        val color = Color.parseColor(
+            when (l.type) {
+                "warn" -> "#ffaa00"
+                "fail" -> "#ff5555"
+                else -> "#00ff88"
+            }
+        )
+        val row = LinearLayout(this).apply {
+            orientation = LinearLayout.HORIZONTAL
+            layoutDirection = View.LAYOUT_DIRECTION_LTR
+            setPadding(0, dp(3), 0, dp(3))
+            layoutParams = LinearLayout.LayoutParams(
+                LinearLayout.LayoutParams.MATCH_PARENT, LinearLayout.LayoutParams.WRAP_CONTENT
+            )
+        }
+        val time = TextView(this).apply {
+            text = "[${Fmt.ts(l.ts, l.time)}]"
+            setTextColor(Color.parseColor("#38bdf8"))
+            textSize = 11f
+            typeface = Typeface.create(Typeface.MONOSPACE, Typeface.BOLD)
+            textDirection = View.TEXT_DIRECTION_LTR
+            layoutParams = LinearLayout.LayoutParams(
+                LinearLayout.LayoutParams.WRAP_CONTENT, LinearLayout.LayoutParams.WRAP_CONTENT
+            ).also { it.marginEnd = dp(8) }
+        }
+        val msg = TextView(this).apply {
+            text = l.msg
+            setTextColor(color)
+            textSize = 13f
+            textDirection = if (rtl) View.TEXT_DIRECTION_RTL else View.TEXT_DIRECTION_LTR
+            gravity = if (rtl) Gravity.RIGHT else Gravity.LEFT
+            layoutParams = LinearLayout.LayoutParams(0, LinearLayout.LayoutParams.WRAP_CONTENT, 1f)
+        }
+        row.addView(time)
+        row.addView(msg)
+        return row
     }
 
     private fun cell(text: String, color: Int = Color.parseColor("#eeeeee"), bold: Boolean = false, span: Int = 1): TextView =
